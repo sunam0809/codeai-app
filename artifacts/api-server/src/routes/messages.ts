@@ -8,7 +8,7 @@ const router = Router();
 
 const grok = new OpenAI({
   apiKey: process.env.GROK_API_KEY,
-  baseURL: "https://api.x.ai/v1",
+  baseURL: "https://api.groq.com/openai/v1",
 });
 
 const SYSTEM_PROMPT = `You are CodeAI, an advanced coding assistant specialized in all areas of software development.
@@ -109,30 +109,26 @@ router.post("/projects/:projectId/messages", requireAuth, async (req: AuthReques
   }));
 
   let aiText = "";
-  try {
-    const completion = await grok.chat.completions.create({
-      model: "grok-3",
-      messages: [
-        { role: "system", content: SYSTEM_PROMPT },
-        ...chatMessages,
-      ],
-      max_tokens: 8000,
-    });
-    aiText = completion.choices[0]?.message?.content || "No response from AI.";
-  } catch (err) {
+  const models = ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "mixtral-8x7b-32768", "llama3-70b-8192"];
+  let lastErr: unknown;
+  for (const model of models) {
     try {
-      const fallback = await grok.chat.completions.create({
-        model: "grok-2-latest",
+      const completion = await grok.chat.completions.create({
+        model,
         messages: [
           { role: "system", content: SYSTEM_PROMPT },
           ...chatMessages,
         ],
         max_tokens: 8000,
       });
-      aiText = fallback.choices[0]?.message?.content || "No response from AI.";
-    } catch (err2) {
-      aiText = `Error calling AI: ${String(err2)}`;
+      aiText = completion.choices[0]?.message?.content || "No response from AI.";
+      break;
+    } catch (err) {
+      lastErr = err;
     }
+  }
+  if (!aiText) {
+    aiText = `Error calling AI: ${String(lastErr)}`;
   }
 
   const { hasFile, fileName, fileContent, cleanContent } = extractFileFromResponse(aiText);
