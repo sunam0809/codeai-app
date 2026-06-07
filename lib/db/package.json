@@ -12,8 +12,11 @@
     "push-force": "drizzle-kit push --force --config ./drizzle.config.ts"
   },
   "dependencies": {
+    "bcrypt": "^6.0.0",
     "drizzle-orm": "catalog:",
     "drizzle-zod": "^0.8.3",
+    "groq-sdk": "^1.2.1",
+    "jsonwebtoken": "^9.0.3",
     "pg": "^8.20.0",
     "zod": "catalog:"
   },
