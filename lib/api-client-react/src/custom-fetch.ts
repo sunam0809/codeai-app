@@ -356,11 +356,13 @@ export async function customFetch<T = unknown>(
     if (token) {
       headers.set("authorization", `Bearer ${token}`);
     }
-  } else if (!headers.has("authorization") && typeof window !== 'undefined') {
-    const token = localStorage.getItem('codeai_token');
-    if (token) {
-      headers.set("authorization", `Bearer ${token}`);
-    }
+  } else if (!headers.has("authorization")) {
+    try {
+      const token = localStorage.getItem("codeai_token");
+      if (token) {
+        headers.set("authorization", `Bearer ${token}`);
+      }
+    } catch(e) {}
   }
 
   const requestInfo = { method, url: resolveUrl(input) };
