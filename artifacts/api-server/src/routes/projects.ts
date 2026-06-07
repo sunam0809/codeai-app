@@ -1,83 +1,115 @@
-import { Router } from "express";
-import { db, projectsTable, messagesTable } from "@workspace/db";
+import { Router, type IRouter } from "express";
+import { db, projectsTable, messagesTable, generatedFilesTable } from "@workspace/db";
 import { eq, and, count, desc } from "drizzle-orm";
-import { requireAuth, AuthRequest } from "../middlewares/auth";
+import { CreateProjectBody, GetProjectParams, DeleteProjectParams } from "@workspace/api-zod";
+import { requireAuth } from "../middlewares/requireAuth";
 
-const router = Router();
+const router: IRouter = Router();
 
-router.get("/projects", requireAuth, async (req: AuthRequest, res) => {
-  const rows = await db
-    .select({
-      id: projectsTable.id,
-      name: projectsTable.name,
-      description: projectsTable.description,
-      userId: projectsTable.userId,
-      createdAt: projectsTable.createdAt,
-      updatedAt: projectsTable.updatedAt,
-      messageCount: count(messagesTable.id),
-    })
+router.get("/projects", requireAuth, async (req, res): Promise<void> => {
+  const projects = await db
+    .select()
     .from(projectsTable)
-    .leftJoin(messagesTable, eq(messagesTable.projectId, projectsTable.id))
-    .where(eq(projectsTable.userId, req.userId!))
-    .groupBy(projectsTable.id)
+    .where(eq(projectsTable.userId, req.user!.userId))
     .orderBy(desc(projectsTable.updatedAt));
 
-  res.json(rows.map(r => ({
-    ...r,
-    createdAt: r.createdAt.toISOString(),
-    updatedAt: r.updatedAt.toISOString(),
-  })));
+  const projectsWithCount = await Promise.all(
+    projects.map(async (p) => {
+      const [{ value }] = await db
+        .select({ value: count() })
+        .from(messagesTable)
+        .where(eq(messagesTable.projectId, p.id));
+      return {
+        id: p.id,
+        userId: p.userId,
+        name: p.name,
+        description: p.description ?? null,
+        messageCount: Number(value),
+        createdAt: p.createdAt.toISOString(),
+        updatedAt: p.updatedAt.toISOString(),
+      };
+    })
+  );
+
+  res.json(projectsWithCount);
 });
 
-router.post("/projects", requireAuth, async (req: AuthRequest, res) => {
-  const { name, description } = req.body;
-  if (!name || typeof name !== "string") {
-    res.status(400).json({ error: "Name is required" });
+router.post("/projects", requireAuth, async (req, res): Promise<void> => {
+  const parsed = CreateProjectBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
     return;
   }
-  const [project] = await db.insert(projectsTable).values({
-    name: name.trim(),
-    description: description || null,
-    userId: req.userId!,
-  }).returning();
+
+  const [project] = await db
+    .insert(projectsTable)
+    .values({ userId: req.user!.userId, name: parsed.data.name, description: parsed.data.description ?? null })
+    .returning();
+
   res.status(201).json({
-    ...project,
+    id: project.id,
+    userId: project.userId,
+    name: project.name,
+    description: project.description ?? null,
     messageCount: 0,
     createdAt: project.createdAt.toISOString(),
     updatedAt: project.updatedAt.toISOString(),
   });
 });
 
-router.get("/projects/:id", requireAuth, async (req: AuthRequest, res) => {
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
+router.get("/projects/:id", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid project id" });
+    return;
+  }
 
-  const rows = await db
-    .select({
-      id: projectsTable.id,
-      name: projectsTable.name,
-      description: projectsTable.description,
-      userId: projectsTable.userId,
-      createdAt: projectsTable.createdAt,
-      updatedAt: projectsTable.updatedAt,
-      messageCount: count(messagesTable.id),
-    })
+  const [project] = await db
+    .select()
     .from(projectsTable)
-    .leftJoin(messagesTable, eq(messagesTable.projectId, projectsTable.id))
-    .where(and(eq(projectsTable.id, id), eq(projectsTable.userId, req.userId!)))
-    .groupBy(projectsTable.id)
-    .limit(1);
+    .where(and(eq(projectsTable.id, id), eq(projectsTable.userId, req.user!.userId)));
 
-  if (rows.length === 0) { res.status(404).json({ error: "Not found" }); return; }
-  const r = rows[0];
-  res.json({ ...r, createdAt: r.createdAt.toISOString(), updatedAt: r.updatedAt.toISOString() });
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  const [{ value }] = await db
+    .select({ value: count() })
+    .from(messagesTable)
+    .where(eq(messagesTable.projectId, id));
+
+  res.json({
+    id: project.id,
+    userId: project.userId,
+    name: project.name,
+    description: project.description ?? null,
+    messageCount: Number(value),
+    createdAt: project.createdAt.toISOString(),
+    updatedAt: project.updatedAt.toISOString(),
+  });
 });
 
-router.delete("/projects/:id", requireAuth, async (req: AuthRequest, res) => {
-  const id = parseInt(req.params.id);
-  if (isNaN(id)) { res.status(400).json({ error: "Invalid id" }); return; }
-  await db.delete(projectsTable).where(and(eq(projectsTable.id, id), eq(projectsTable.userId, req.userId!)));
-  res.status(204).send();
+router.delete("/projects/:id", requireAuth, async (req, res): Promise<void> => {
+  const raw = Array.isArray(req.params.id) ? req.params.id[0] : req.params.id;
+  const id = parseInt(raw, 10);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid project id" });
+    return;
+  }
+
+  const [project] = await db
+    .delete(projectsTable)
+    .where(and(eq(projectsTable.id, id), eq(projectsTable.userId, req.user!.userId)))
+    .returning();
+
+  if (!project) {
+    res.status(404).json({ error: "Project not found" });
+    return;
+  }
+
+  res.sendStatus(204);
 });
 
 export default router;
