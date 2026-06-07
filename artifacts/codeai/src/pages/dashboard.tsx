@@ -1,223 +1,205 @@
-import { useState } from "react";
-import { Link, useLocation } from "wouter";
-import { useListProjects, useGetStats, useCreateProject, useDeleteProject, getListProjectsQueryKey, getGetStatsQueryKey } from "@workspace/api-client-react";
-import { useQueryClient } from "@tanstack/react-query";
-import { useAuth } from "@/lib/auth";
-
-import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle, CardFooter } from "@/components/ui/card";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/hooks/use-toast";
-import { Terminal, Plus, FolderGit2, MessageSquare, Clock, LogOut, MoreVertical, Trash } from "lucide-react";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { formatDistanceToNow } from "date-fns";
+import { useEffect, useState } from 'react';
+import { useLocation, Link } from 'wouter';
+import { format } from 'date-fns';
+import { FolderGit2, Plus, Terminal, Trash2, LogOut, Clock } from 'lucide-react';
+import { 
+  useGetMe, 
+  useListProjects, 
+  useCreateProject, 
+  useDeleteProject,
+  getGetMeQueryKey,
+  getListProjectsQueryKey 
+} from '@workspace/api-client-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '@/hooks/use-auth';
+import { useToast } from '@/hooks/use-toast';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogClose } from '@/components/ui/dialog';
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 
 export default function Dashboard() {
-  const { logout } = useAuth();
   const [, setLocation] = useLocation();
+  const { isAuthenticated, logout } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
   
-  const [createOpen, setCreateOpen] = useState(false);
-  const [newProjectName, setNewProjectName] = useState("");
-  const [newProjectDesc, setNewProjectDesc] = useState("");
+  const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectDesc, setNewProjectDesc] = useState('');
 
-  const { data: projects, isLoading: projectsLoading } = useListProjects();
-  const { data: stats, isLoading: statsLoading } = useGetStats();
-
-  const createMutation = useCreateProject({
-    mutation: {
-      onSuccess: (data) => {
-        setCreateOpen(false);
-        setNewProjectName("");
-        setNewProjectDesc("");
-        queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getGetStatsQueryKey() });
-        setLocation(`/projects/${data.id}`);
-      },
-      onError: () => {
-        toast({ variant: "destructive", title: "Failed to create project" });
-      }
-    }
+  const { data: user, isError: userError } = useGetMe({ 
+    query: { enabled: isAuthenticated, retry: false, queryKey: getGetMeQueryKey() } 
+  });
+  
+  const { data: projects, isLoading: projectsLoading } = useListProjects({
+    query: { enabled: !!user, queryKey: getListProjectsQueryKey() }
   });
 
-  const deleteMutation = useDeleteProject({
-    mutation: {
-      onSuccess: () => {
-        toast({ title: "Project deleted" });
-        queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
-        queryClient.invalidateQueries({ queryKey: getGetStatsQueryKey() });
-      },
-      onError: () => {
-        toast({ variant: "destructive", title: "Failed to delete project" });
-      }
+  const createProject = useCreateProject();
+  const deleteProject = useDeleteProject();
+
+  useEffect(() => {
+    if (!isAuthenticated || userError) {
+      logout();
     }
-  });
+  }, [isAuthenticated, userError, logout]);
 
   const handleCreateProject = () => {
     if (!newProjectName.trim()) return;
-    createMutation.mutate({
-      data: {
-        name: newProjectName,
-        description: newProjectDesc
+    
+    createProject.mutate({
+      data: { name: newProjectName, description: newProjectDesc }
+    }, {
+      onSuccess: (newProj) => {
+        setIsCreateOpen(false);
+        setNewProjectName('');
+        setNewProjectDesc('');
+        queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
+        setLocation(`/project/${newProj.id}`);
+      },
+      onError: () => {
+        toast({ title: '생성 실패', description: '프로젝트를 생성하지 못했습니다.', variant: 'destructive' });
       }
     });
   };
 
+  const handleDeleteProject = (e: React.MouseEvent, id: number) => {
+    e.preventDefault();
+    e.stopPropagation();
+    
+    if (!confirm('정말로 이 프로젝트를 삭제하시겠습니까?')) return;
+    
+    deleteProject.mutate({ id }, {
+      onSuccess: () => {
+        queryClient.invalidateQueries({ queryKey: getListProjectsQueryKey() });
+        toast({ title: '삭제 완료', description: '프로젝트가 삭제되었습니다.' });
+      }
+    });
+  };
+
+  if (!user) return <div className="min-h-screen bg-background flex items-center justify-center"><Terminal className="w-8 h-8 animate-pulse text-primary" /></div>;
+
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <header className="h-16 border-b border-border px-6 flex items-center justify-between bg-card">
-        <div className="flex items-center gap-2 text-primary">
-          <Terminal className="h-5 w-5" />
-          <span className="font-bold text-foreground">CodeAI</span>
-        </div>
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="icon" onClick={logout} title="Log out">
-            <LogOut className="h-5 w-5 text-muted-foreground hover:text-foreground" />
-          </Button>
+      <header className="border-b border-border bg-card/30 backdrop-blur-sm sticky top-0 z-10">
+        <div className="container mx-auto px-4 h-16 flex items-center justify-between">
+          <Link href="/" className="flex items-center gap-2">
+            <Terminal className="w-6 h-6 text-primary" />
+            <span className="font-bold font-mono text-xl">CodeAI</span>
+          </Link>
+          <div className="flex items-center gap-4">
+            <div className="text-sm text-muted-foreground font-mono">
+              {user.username} <span className="opacity-50">({user.email})</span>
+            </div>
+            <Button variant="ghost" size="icon" onClick={logout} title="로그아웃">
+              <LogOut className="w-4 h-4" />
+            </Button>
+          </div>
         </div>
       </header>
 
-      <main className="flex-1 p-6 lg:p-10 max-w-7xl mx-auto w-full space-y-8">
-        {/* Stats Section */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          <Card className="bg-card">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Total Projects</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{statsLoading ? "-" : stats?.totalProjects || 0}</div>
-            </CardContent>
-          </Card>
-          <Card className="bg-card">
-            <CardHeader className="pb-2">
-              <CardTitle className="text-sm font-medium text-muted-foreground">Total Messages</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="text-3xl font-bold">{statsLoading ? "-" : stats?.totalMessages || 0}</div>
-            </CardContent>
-          </Card>
-          <Card className="bg-card flex flex-col justify-center">
-            <CardContent className="pt-6">
-              <Dialog open={createOpen} onOpenChange={setCreateOpen}>
-                <DialogTrigger asChild>
-                  <Button className="w-full h-12 text-md" size="lg">
-                    <Plus className="mr-2 h-5 w-5" />
-                    New Project
-                  </Button>
-                </DialogTrigger>
-                <DialogContent className="sm:max-w-[425px]">
-                  <DialogHeader>
-                    <DialogTitle>Create new project</DialogTitle>
-                    <DialogDescription>
-                      Initialize a new workspace for your coding tasks.
-                    </DialogDescription>
-                  </DialogHeader>
-                  <div className="grid gap-4 py-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="name">Project Name</Label>
-                      <Input
-                        id="name"
-                        value={newProjectName}
-                        onChange={(e) => setNewProjectName(e.target.value)}
-                        placeholder="e.g. Windows Driver, React Dashboard"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <Label htmlFor="description">Description (Optional)</Label>
-                      <Textarea
-                        id="description"
-                        value={newProjectDesc}
-                        onChange={(e) => setNewProjectDesc(e.target.value)}
-                        placeholder="What are you building?"
-                      />
-                    </div>
-                  </div>
-                  <DialogFooter>
-                    <Button variant="outline" onClick={() => setCreateOpen(false)}>Cancel</Button>
-                    <Button onClick={handleCreateProject} disabled={!newProjectName.trim() || createMutation.isPending}>
-                      {createMutation.isPending ? "Creating..." : "Create"}
-                    </Button>
-                  </DialogFooter>
-                </DialogContent>
-              </Dialog>
-            </CardContent>
-          </Card>
+      <main className="flex-1 container mx-auto px-4 py-12">
+        <div className="flex items-center justify-between mb-8">
+          <div>
+            <h1 className="text-3xl font-bold tracking-tight">작업 공간</h1>
+            <p className="text-muted-foreground mt-1">모든 프로젝트와 대화 내역을 관리하세요.</p>
+          </div>
+          
+          <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+            <DialogTrigger asChild>
+              <Button className="font-mono">
+                <Plus className="w-4 h-4 mr-2" /> 새 프로젝트
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="sm:max-w-[425px]">
+              <DialogHeader>
+                <DialogTitle>새 프로젝트 생성</DialogTitle>
+              </DialogHeader>
+              <div className="grid gap-4 py-4">
+                <div className="grid gap-2">
+                  <label htmlFor="name" className="text-sm font-medium">프로젝트 이름</label>
+                  <Input 
+                    id="name" 
+                    value={newProjectName} 
+                    onChange={(e) => setNewProjectName(e.target.value)} 
+                    placeholder="ex) System Monitor" 
+                    className="font-mono"
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <label htmlFor="desc" className="text-sm font-medium">설명 (선택)</label>
+                  <Input 
+                    id="desc" 
+                    value={newProjectDesc} 
+                    onChange={(e) => setNewProjectDesc(e.target.value)} 
+                    placeholder="C++ 기반 시스템 모니터링 툴" 
+                  />
+                </div>
+              </div>
+              <DialogFooter>
+                <DialogClose asChild>
+                  <Button variant="outline">취소</Button>
+                </DialogClose>
+                <Button onClick={handleCreateProject} disabled={createProject.isPending || !newProjectName.trim()}>
+                  생성하기
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
         </div>
 
-        {/* Projects List */}
-        <div>
-          <h2 className="text-2xl font-bold mb-6">Your Workspaces</h2>
-          
-          {projectsLoading ? (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {[1, 2, 3].map(i => (
-                <Card key={i} className="h-48 animate-pulse bg-muted/20" />
-              ))}
-            </div>
-          ) : projects?.length === 0 ? (
-            <div className="text-center py-20 border border-dashed border-border rounded-xl bg-card/50">
-              <FolderGit2 className="h-12 w-12 text-muted-foreground mx-auto mb-4 opacity-50" />
-              <h3 className="text-lg font-medium text-foreground mb-1">No projects yet</h3>
-              <p className="text-muted-foreground mb-4">Create your first workspace to start building.</p>
-              <Button onClick={() => setCreateOpen(true)}>Create Project</Button>
-            </div>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-              {projects?.map((project) => (
-                <Card key={project.id} className="group hover:border-primary/50 transition-colors bg-card flex flex-col cursor-pointer" onClick={() => setLocation(`/projects/${project.id}`)}>
-                  <CardHeader className="pb-3 flex flex-row items-start justify-between space-y-0">
+        {projectsLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {[1,2,3].map(i => (
+              <div key={i} className="h-48 rounded-xl bg-card/50 border border-border animate-pulse" />
+            ))}
+          </div>
+        ) : !projects || projects.length === 0 ? (
+          <div className="text-center py-20 border-2 border-dashed border-border rounded-2xl bg-card/20">
+            <FolderGit2 className="w-12 h-12 text-muted-foreground mx-auto mb-4 opacity-50" />
+            <h3 className="text-lg font-medium mb-2">프로젝트가 없습니다</h3>
+            <p className="text-muted-foreground mb-6">첫 번째 프로젝트를 생성하고 AI와 코딩을 시작해보세요.</p>
+            <Button onClick={() => setIsCreateOpen(true)} variant="outline">
+              <Plus className="w-4 h-4 mr-2" /> 프로젝트 만들기
+            </Button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            {projects.map((project) => (
+              <Link key={project.id} href={`/project/${project.id}`}>
+                <Card className="h-full hover:border-primary/50 transition-colors cursor-pointer group bg-card/40 backdrop-blur-sm border-border flex flex-col">
+                  <CardHeader className="pb-3 flex-row items-start justify-between space-y-0">
                     <div>
-                      <CardTitle className="text-lg flex items-center gap-2">
-                        <FolderGit2 className="h-5 w-5 text-primary" />
-                        {project.name}
-                      </CardTitle>
-                      {project.description && (
-                        <CardDescription className="mt-2 line-clamp-2">
-                          {project.description}
-                        </CardDescription>
-                      )}
+                      <CardTitle className="text-xl font-mono truncate max-w-[200px]">{project.name}</CardTitle>
+                      <CardDescription className="line-clamp-2 mt-2 h-10">
+                        {project.description || '설명 없음'}
+                      </CardDescription>
                     </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                        <Button variant="ghost" size="icon" className="-mt-2 -mr-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <MoreVertical className="h-4 w-4 text-muted-foreground" />
-                        </Button>
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem 
-                          className="text-destructive focus:text-destructive focus:bg-destructive/10"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            if(confirm('Are you sure you want to delete this project?')) {
-                              deleteMutation.mutate({ id: project.id });
-                            }
-                          }}
-                        >
-                          <Trash className="mr-2 h-4 w-4" />
-                          Delete Project
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
+                    <Button 
+                      variant="ghost" 
+                      size="icon" 
+                      className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-opacity -mt-2 -mr-2"
+                      onClick={(e) => handleDeleteProject(e, project.id)}
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
                   </CardHeader>
-                  <CardFooter className="mt-auto pt-4 border-t border-border/50 text-xs text-muted-foreground flex justify-between">
+                  <CardContent className="mt-auto pt-4 pb-4 flex justify-between items-center text-sm text-muted-foreground border-t border-border/50">
                     <div className="flex items-center gap-1.5">
-                      <MessageSquare className="h-3.5 w-3.5" />
-                      {project.messageCount} messages
+                      <Terminal className="w-3.5 h-3.5" />
+                      <span>{project.messageCount} messages</span>
                     </div>
                     <div className="flex items-center gap-1.5">
-                      <Clock className="h-3.5 w-3.5" />
-                      {formatDistanceToNow(new Date(project.updatedAt), { addSuffix: true })}
+                      <Clock className="w-3.5 h-3.5" />
+                      <span>{format(new Date(project.updatedAt), 'MMM d, HH:mm')}</span>
                     </div>
-                  </CardFooter>
+                  </CardContent>
                 </Card>
-              ))}
-            </div>
-          )}
-        </div>
+              </Link>
+            ))}
+          </div>
+        )}
       </main>
     </div>
   );
